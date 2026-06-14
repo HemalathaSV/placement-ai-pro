@@ -1,12 +1,13 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useMemo, useState } from "react";
-import { Upload, Play, FileText, AlertCircle, Loader2 } from "lucide-react";
+import { Upload, Play, FileText, AlertCircle, Loader2, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 import { extractPdfText } from "@/lib/pdf";
 import {
   runCoordinator,
   getGeminiKey,
+  isDemoMode,
   type AgentName,
   type AgentStatus,
   type AtsReport,
@@ -39,6 +40,7 @@ function Dashboard() {
   const [parsing, setParsing] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [demoNotification, setDemoNotification] = useState<string | null>(null);
 
   const [statuses, setStatuses] = useState<Record<AgentName, AgentStatus>>({
     resume: "pending",
@@ -53,6 +55,7 @@ function Dashboard() {
   const [final, setFinal] = useState<FinalReport | null>(null);
 
   const hasKey = useMemo(() => !!getGeminiKey(), [running, final]);
+  const inDemoMode = useMemo(() => isDemoMode(), [running, final]);
 
   const handleFile = useCallback(async (f: File | null) => {
     setError(null);
@@ -81,11 +84,12 @@ function Dashboard() {
 
   const onAnalyze = useCallback(async () => {
     if (!resumeText || !role) return;
-    if (!getGeminiKey()) {
+    if (!getGeminiKey() && !isDemoMode()) {
       setError("Add your Gemini API key in Settings first.");
       return;
     }
     setError(null);
+    setDemoNotification(null);
     setResume(null); setAts(null); setRoadmap(null); setFinal(null);
     setStatuses({ resume: "pending", ats: "pending", roadmap: "pending" });
     setCoordinatorStatus("running");
@@ -96,6 +100,7 @@ function Dashboard() {
         onResume: setResume,
         onAts: setAts,
         onRoadmap: setRoadmap,
+        onDemoModeActivated: (msg) => setDemoNotification(msg),
       });
       setFinal(f);
       setCoordinatorStatus("completed");
@@ -125,6 +130,28 @@ function Dashboard() {
             <Link to="/settings" className="font-semibold text-warn underline">Add one in Settings</Link> to run live analyses.
           </div>
         </div>
+      )}
+
+      {inDemoMode && (
+        <div className="mb-6 flex items-start gap-3 rounded-xl border border-yellow-500/40 bg-yellow-500/10 p-4 text-sm">
+          <Zap className="mt-0.5 h-4 w-4 text-yellow-600" />
+          <div>
+            <span className="font-semibold">Demo Mode Enabled.</span> Generating realistic demo responses for presentations and testing.
+            <Link to="/settings" className="ml-1 font-semibold text-yellow-600 underline">Disable in Settings</Link>
+          </div>
+        </div>
+      )}
+
+      {demoNotification && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          className="mb-6 flex items-start gap-3 rounded-xl border border-yellow-500/60 bg-yellow-500/15 p-4 text-sm"
+        >
+          <Zap className="mt-0.5 h-4 w-4 text-yellow-600" />
+          <div className="font-medium text-yellow-700">{demoNotification}</div>
+        </motion.div>
       )}
 
       <div className="grid gap-6 lg:grid-cols-[1fr_1.2fr]">

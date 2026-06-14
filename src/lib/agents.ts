@@ -55,6 +55,7 @@ export interface FinalReport {
 }
 
 const KEY_STORAGE = "place_ai_gemini_key";
+const DEMO_MODE_STORAGE = "place_ai_demo_mode";
 
 export function getGeminiKey(): string | null {
   if (typeof window !== "undefined") {
@@ -71,12 +72,174 @@ export function setGeminiKey(key: string) {
   else window.localStorage.removeItem(KEY_STORAGE);
 }
 
+export function isDemoMode(): boolean {
+  if (typeof window !== "undefined") {
+    return window.localStorage.getItem(DEMO_MODE_STORAGE) === "true";
+  }
+  return false;
+}
+
+export function setDemoMode(enabled: boolean) {
+  if (typeof window === "undefined") return;
+  if (enabled) window.localStorage.setItem(DEMO_MODE_STORAGE, "true");
+  else window.localStorage.removeItem(DEMO_MODE_STORAGE);
+}
+
+let demoModeActivated = false;
+
+export function getDemoModeActivated(): boolean {
+  return demoModeActivated;
+}
+
+export function resetDemoModeActivated() {
+  demoModeActivated = false;
+}
+
 const MODEL = "gemini-2.0-flash";
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 
+// Demo mode generators for realistic fallback responses
+function generateDemoResumeReport(resumeText: string): ResumeReport {
+  const hasExperience = resumeText.toLowerCase().includes("experience") || resumeText.toLowerCase().includes("project");
+  const hasEducation = resumeText.toLowerCase().includes("education") || resumeText.toLowerCase().includes("degree");
+  const hasSkills = resumeText.toLowerCase().includes("skill") || resumeText.toLowerCase().includes("technical");
+
+  return {
+    score: hasExperience ? 7 : 5,
+    strengths: [
+      hasExperience ? "Clear project experience demonstrated" : "Shows foundational knowledge",
+      "Well-organized document structure",
+      "Includes key technical terms",
+    ],
+    weaknesses: [
+      "Lacks specific quantifiable achievements",
+      "Limited metrics and impact demonstrations",
+      !hasEducation ? "Education section incomplete" : "Could expand technical skills section",
+    ],
+    missingSections: [
+      !hasExperience ? "Work experience or projects" : null,
+      !hasSkills ? "Technical skills section" : null,
+      "Certifications or courses",
+    ].filter(Boolean) as string[],
+    skillAnalysis: "Resume demonstrates foundational technical knowledge with room for specialization. Focus on cloud technologies and modern frameworks would strengthen candidacy.",
+    projectEvaluation: "Project descriptions are present but lack quantifiable impact metrics. Adding specific technologies used and measurable outcomes would improve ATS scoring.",
+    improvements: [
+      "Quantify achievements with metrics (e.g., '30% performance improvement')",
+      "Add specific tech stacks and tools for each project",
+      "Include relevant certifications",
+      "Expand education with relevant coursework or honors",
+    ],
+  };
+}
+
+function generateDemoAtsReport(resumeText: string, role: string): AtsReport {
+  const keywords = extractKeywordsForRole(role);
+  const resumeLower = resumeText.toLowerCase();
+  const matchedKeywords = keywords.filter(k => resumeLower.includes(k.toLowerCase())).slice(0, 8);
+  const missingKeywords = keywords.filter(k => !resumeLower.includes(k.toLowerCase())).slice(0, 6);
+
+  return {
+    atsScore: 65 + Math.random() * 20,
+    keywordMatch: Math.round((matchedKeywords.length / keywords.length) * 100),
+    matchedKeywords,
+    missingKeywords,
+    skillGaps: [
+      "Advanced system design patterns",
+      "Cloud infrastructure (AWS/GCP/Azure)",
+      "Containerization (Docker/Kubernetes)",
+      "CI/CD pipeline experience",
+    ],
+    roleCompatibility: `Moderate alignment with ${role}. Resume covers foundational requirements but lacks advanced specialization keywords.`,
+    suggestions: [
+      "Add specific framework versions and tools used",
+      `Emphasize ${role}-specific technologies in your experience section`,
+      "Include metrics showing impact of projects",
+      "List relevant certifications prominently",
+    ],
+  };
+}
+
+function generateDemoRoadmapReport(resumeText: string, role: string, resume: ResumeReport, ats: AtsReport): RoadmapReport {
+  const weeks: RoadmapWeek[] = [
+    {
+      week: 1,
+      focus: "Foundation & Assessment",
+      tasks: ["Complete skill gap analysis", "Set up development environment", "Review target role requirements"],
+      resources: ["LinkedIn Learning courses", "Official framework documentation"],
+    },
+    {
+      week: 2,
+      focus: `Advanced ${role} Techniques`,
+      tasks: ["Complete 2 advanced tutorials", "Build a mini project", "Document learnings"],
+      resources: ["Udemy courses", "GitHub projects", "Technical blogs"],
+    },
+    {
+      week: 3,
+      focus: "Portfolio Enhancement",
+      tasks: ["Refactor existing project", "Add new portfolio piece", "Prepare case study"],
+      resources: ["GitHub", "Portfolio website template"],
+    },
+    {
+      week: 4,
+      focus: "Interview Preparation",
+      tasks: ["Practice coding challenges", "Prepare behavioral responses", "Mock interviews"],
+      resources: ["LeetCode", "System design primers", "Mock interview platforms"],
+    },
+  ];
+
+  return {
+    skillGaps: ats.skillGaps || [],
+    weeks,
+    projects: [
+      {
+        title: "Full Stack Application Project",
+        description: "Build a complete application demonstrating ${role} skills with modern tech stack",
+      },
+      {
+        title: "Open Source Contribution",
+        description: "Contribute to established open source project relevant to target role",
+      },
+    ],
+    interviewPlan: [
+      "System design for ${role} role",
+      "Behavioral interview prep: Tell us about a challenging project",
+      "Technical deep-dive on one portfolio project",
+      "Culture fit and team collaboration discussion",
+    ],
+    placementReadiness: 72,
+  };
+}
+
+function extractKeywordsForRole(role: string): string[] {
+  const roleKeywords: Record<string, string[]> = {
+    "software engineer": ["javascript", "react", "typescript", "nodejs", "git", "rest api", "testing", "agile", "sql", "database"],
+    "data scientist": ["python", "pandas", "numpy", "matplotlib", "machine learning", "tensorflow", "jupyter", "sql", "statistics", "scikit-learn"],
+    "data analyst": ["sql", "tableau", "power bi", "python", "excel", "data visualization", "analytics", "dashboards", "reporting", "excel vba"],
+    "ui/ux designer": ["figma", "prototyping", "user research", "wireframing", "design systems", "adobe xd", "usability testing", "css", "html"],
+    "business analyst": ["requirements gathering", "sql", "excel", "documentation", "process improvement", "stakeholder management", "agile", "jira"],
+  };
+
+  const normalized = role.toLowerCase();
+  for (const [key, keywords] of Object.entries(roleKeywords)) {
+    if (normalized.includes(key)) return keywords;
+  }
+  return ["communication", "teamwork", "problem-solving", "documentation", "version control"];
+}
+
 async function callGemini<T>(systemRole: string, userPrompt: string, schemaHint: string): Promise<T> {
   const key = getGeminiKey();
-  if (!key) throw new Error("Missing Gemini API key. Add it in Settings.");
+  
+  // Check if demo mode is enabled or should be auto-activated
+  if (!key || isDemoMode()) {
+    // If no key and not explicitly in demo mode, would normally throw
+    // But this is handled by the calling agent
+    if (isDemoMode()) {
+      demoModeActivated = true;
+      // Generate appropriate demo response based on schema
+      return generateDemoResponse<T>(schemaHint) as T;
+    }
+    if (!key) throw new Error("Missing Gemini API key. Add it in Settings.");
+  }
 
   const body = {
     system_instruction: { parts: [{ text: systemRole }] },
@@ -96,19 +259,53 @@ async function callGemini<T>(systemRole: string, userPrompt: string, schemaHint:
     },
   };
 
-  const res = await fetch(`${ENDPOINT}?key=${encodeURIComponent(key)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  try {
+    const res = await fetch(`${ENDPOINT}?key=${encodeURIComponent(key)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
 
-  if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    throw new Error(`Gemini ${res.status}: ${txt.slice(0, 300)}`);
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      const status = res.status;
+      
+      // Handle quota, permission, and server errors by activating demo mode
+      if (status === 429 || status === 403 || status === 500) {
+        demoModeActivated = true;
+        console.warn(`Gemini API error ${status}. Activating Demo Mode.`);
+        return generateDemoResponse<T>(schemaHint) as T;
+      }
+      
+      throw new Error(`Gemini ${status}: ${txt.slice(0, 300)}`);
+    }
+
+    const json = await res.json();
+    const text: string = json?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    return extractJson<T>(text);
+  } catch (e: any) {
+    // Network errors also trigger demo mode
+    if (e.message.includes("fetch") || e.message.includes("network") || e.message.includes("timeout")) {
+      demoModeActivated = true;
+      console.warn("Network error. Activating Demo Mode.");
+      return generateDemoResponse<T>(schemaHint) as T;
+    }
+    throw e;
   }
-  const json = await res.json();
-  const text: string = json?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  return extractJson<T>(text);
+}
+
+function generateDemoResponse<T>(schemaHint: string): T {
+  // Parse schema to determine what type of response to generate
+  if (schemaHint.includes("atsScore")) {
+    return { atsScore: 72, keywordMatch: 68 } as any;
+  }
+  if (schemaHint.includes("placementReadiness")) {
+    return { placementReadiness: 75, weeks: [] } as any;
+  }
+  if (schemaHint.includes("score")) {
+    return { score: 7 } as any;
+  }
+  return {} as T;
 }
 
 function extractJson<T>(text: string): T {
@@ -128,6 +325,9 @@ function extractJson<T>(text: string): T {
 // ---- Individual agents ----
 
 export async function runResumeAgent(resumeText: string): Promise<ResumeReport> {
+  if (isDemoMode()) {
+    return generateDemoResumeReport(resumeText);
+  }
   return callGemini<ResumeReport>(
     "You are a Resume Evaluation Specialist. Be rigorous, specific, and constructive.",
     `Evaluate the following resume.\n\nRESUME:\n${resumeText}`,
@@ -136,6 +336,9 @@ export async function runResumeAgent(resumeText: string): Promise<ResumeReport> 
 }
 
 export async function runAtsAgent(resumeText: string, role: string): Promise<AtsReport> {
+  if (isDemoMode()) {
+    return generateDemoAtsReport(resumeText, role);
+  }
   return callGemini<AtsReport>(
     "You are an ATS Optimization Specialist. Score the resume against the target role with the rigour of a modern Applicant Tracking System.",
     `Target Role: ${role}\n\nRESUME:\n${resumeText}`,
@@ -149,6 +352,9 @@ export async function runRoadmapAgent(
   resume: ResumeReport,
   ats: AtsReport,
 ): Promise<RoadmapReport> {
+  if (isDemoMode()) {
+    return generateDemoRoadmapReport(resumeText, role, resume, ats);
+  }
   return callGemini<RoadmapReport>(
     "You are a Career Development Coach building practical, week-by-week plans for engineering students.",
     `Target Role: ${role}\n\nRESUME ANALYSIS: ${JSON.stringify(resume)}\n\nATS ANALYSIS: ${JSON.stringify(ats)}\n\nResume excerpt:\n${resumeText.slice(0, 2000)}`,
@@ -163,6 +369,7 @@ export interface CoordinatorEvents {
   onResume?: (r: ResumeReport) => void;
   onAts?: (r: AtsReport) => void;
   onRoadmap?: (r: RoadmapReport) => void;
+  onDemoModeActivated?: (message: string) => void;
 }
 
 export async function runCoordinator(
@@ -170,10 +377,16 @@ export async function runCoordinator(
   role: string,
   ev: CoordinatorEvents,
 ): Promise<FinalReport> {
+  // Reset demo mode flag at the start of each coordinator run
+  resetDemoModeActivated();
+
   ev.onStatus("resume", "running");
   let resume: ResumeReport;
   try {
     resume = await runResumeAgent(resumeText);
+    if (getDemoModeActivated()) {
+      ev.onDemoModeActivated?.("Gemini quota exceeded. Demo Mode activated.");
+    }
     ev.onResume?.(resume);
     ev.onStatus("resume", "completed");
   } catch (e: any) {

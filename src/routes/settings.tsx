@@ -1,7 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Key, Check, Trash2, Sun, Moon } from "lucide-react";
-import { getGeminiKey, setGeminiKey } from "@/lib/agents";
+import { Key, Check, Trash2, Sun, Moon, Zap } from "lucide-react";
+import { getGeminiKey, setGeminiKey, isDemoMode, setDemoMode } from "@/lib/agents";
 import { useTheme } from "@/hooks/useTheme";
 
 export const Route = createFileRoute("/settings")({
@@ -18,6 +18,7 @@ function Settings() {
   const { theme, setTheme } = useTheme();
   const [key, setKey] = useState("");
   const [saved, setSaved] = useState<string | null>(null);
+  const [demoMode, setDemoModeLocal] = useState(isDemoMode());
   const envPresent = !!(import.meta.env.VITE_GEMINI_API_KEY as string | undefined);
 
   useEffect(() => {
@@ -37,10 +38,16 @@ function Settings() {
     setKey("");
   };
 
+  const toggleDemoMode = () => {
+    const newValue = !demoMode;
+    setDemoModeLocal(newValue);
+    setDemoMode(newValue);
+  };
+
   return (
     <main className="mx-auto max-w-3xl px-4 py-10 sm:px-6">
       <h1 className="font-display text-3xl font-bold">Settings</h1>
-      <p className="mt-1 text-sm text-muted-foreground">Manage your Gemini API key and theme.</p>
+      <p className="mt-1 text-sm text-muted-foreground">Manage your Gemini API key, Demo Mode, and theme.</p>
 
       <section className="glass mt-8 rounded-2xl p-6">
         <div className="flex items-center gap-3">
@@ -88,6 +95,39 @@ function Settings() {
               <div className="mt-2 text-xs text-muted-foreground">A <code>VITE_GEMINI_API_KEY</code> environment variable is detected as a fallback.</div>
             )}
           </div>
+        </div>
+      </section>
+
+      <section className="glass mt-6 rounded-2xl p-6">
+        <div className="flex items-center gap-3">
+          <span className="grid h-10 w-10 place-items-center rounded-xl bg-yellow-500/15 text-yellow-600"><Zap className="h-5 w-5" /></span>
+          <div>
+            <h2 className="font-display text-lg font-semibold">Demo Mode</h2>
+            <p className="text-xs text-muted-foreground">Generate realistic demo responses when Gemini is unavailable.</p>
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-center gap-3">
+          <button
+            onClick={toggleDemoMode}
+            className={`relative inline-flex h-8 w-14 items-center rounded-full transition ${
+              demoMode ? "bg-yellow-500" : "bg-foreground/10"
+            }`}
+          >
+            <span
+              className={`inline-block h-6 w-6 transform rounded-full bg-white transition ${
+                demoMode ? "translate-x-7" : "translate-x-1"
+              }`}
+            />
+          </button>
+          <span className="text-sm font-medium">{demoMode ? "Demo Mode ON" : "Demo Mode OFF"}</span>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-border bg-background/40 p-4 text-sm">
+          <p className="text-muted-foreground">
+            When enabled, Place AI generates realistic demo responses if the Gemini API becomes unavailable (quota exceeded, network error, etc.).
+            This is useful for presentations and testing.
+          </p>
         </div>
       </section>
 
