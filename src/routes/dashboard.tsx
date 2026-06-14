@@ -1,9 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useMemo, useState } from "react";
-import { Upload, Play, FileText, AlertCircle, Loader2, Zap } from "lucide-react";
+import { Upload, Play, FileText, AlertCircle, Loader2, Zap, Settings2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 import { extractPdfText } from "@/lib/pdf";
+import { generatePlacementReportPDF } from "@/lib/pdf-export";
 import {
   runCoordinator,
   getGeminiKey,
@@ -15,8 +16,14 @@ import {
   type ResumeReport,
   type RoadmapReport,
 } from "@/lib/agents";
+import { type CompanyName } from "@/lib/company-data";
 import { WorkflowDiagram } from "@/components/WorkflowDiagram";
 import { AtsResultCard, FinalReportCard, ResumeResultCard, RoadmapResultCard } from "@/components/AgentResults";
+import { KPIDashboard } from "@/components/KPIDashboard";
+import { AgentExecutionTimeline, type TimelineEntry } from "@/components/AgentExecutionTimeline";
+import { SkillGapAnalysis } from "@/components/SkillGapAnalysis";
+import { ProfessionalReport } from "@/components/ProfessionalReport";
+import { CompanySelector } from "@/components/CompanySelector";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -37,10 +44,12 @@ function Dashboard() {
   const [resumeText, setResumeText] = useState("");
   const [pages, setPages] = useState(0);
   const [role, setRole] = useState<string>(ROLES[3]);
+  const [selectedCompany, setSelectedCompany] = useState<CompanyName>("Infosys");
   const [parsing, setParsing] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [demoNotification, setDemoNotification] = useState<string | null>(null);
+  const [timelineEntries, setTimelineEntries] = useState<TimelineEntry[]>([]);
 
   const [statuses, setStatuses] = useState<Record<AgentName, AgentStatus>>({
     resume: "pending",
@@ -90,20 +99,48 @@ function Dashboard() {
     }
     setError(null);
     setDemoNotification(null);
+    setTimelineEntries([]);
     setResume(null); setAts(null); setRoadmap(null); setFinal(null);
     setStatuses({ resume: "pending", ats: "pending", roadmap: "pending" });
     setCoordinatorStatus("running");
     setRunning(true);
+
     try {
-      const f = await runCoordinator(resumeText, role, {
-        onStatus: (a, s) => setStatuses((prev) => ({ ...prev, [a]: s })),
-        onResume: setResume,
-        onAts: setAts,
-        onRoadmap: setRoadmap,
+      const entries: TimelineEntry[] = [];
+
+      // Track Resume Agent
+      entries.push({ agent: "Resume Agent", event: "Started", status: "running", timestamp: new Date() });
+      setTimelineEntries([...entries]);
+
+      const f = await runCoordinator(resumeText, role, selectedCompany, {
+        onStatus: (a, s) => {
+          setStatuses((prev) => ({ ...prev, [a]: s }));
+          entries.push({ agent: `${a} Agent`, event: s === "completed" ? "Completed" : "Error", status: s, timestamp: new Date() });
+          setTimelineEntries([...entries]);
+        },
+        onResume: (r) => {
+          setResume(r);
+          entries[entries.length - 1] = { ...entries[entries.length - 1], status: "completed" };
+          setTimelineEntries([...entries]);
+        },
+        onAts: (r) => {
+          setAts(r);
+          const idx = entries.findIndex(e => e.agent === "ats Agent");
+          if (idx >= 0) entries[idx] = { ...entries[idx], status: "completed" };
+          setTimelineEntries([...entries]);
+        },
+        onRoadmap: (r) => {
+          setRoadmap(r);
+          const idx = entries.findIndex(e => e.agent === "roadmap Agent");
+          if (idx >= 0) entries[idx] = { ...entries[idx], status: "completed" };
+          setTimelineEntries([...entries]);
+        },
         onDemoModeActivated: (msg) => setDemoNotification(msg),
       });
       setFinal(f);
       setCoordinatorStatus("completed");
+      entries.push({ agent: "Coordinator", event: "Report Generated", status: "completed", timestamp: new Date() });
+      setTimelineEntries([...entries]);
     } catch (e: any) {
       setCoordinatorStatus("error");
       setError(e?.message ?? "Analysis failed.");
@@ -115,10 +152,18 @@ function Dashboard() {
   return (
     <main className="mx-auto max-w-7xl px-4 py-10 sm:px-6">
       <header className="mb-8 flex flex-col gap-2">
-        <div className="text-xs uppercase tracking-widest text-muted-foreground">Multi-Agent Console</div>
+        <div className="flex items-center gap-3">
+          <div className="text-xs uppercase tracking-widest text-muted-foreground">Multi-Agent Console</div>
+          {(inDemoMode || demoNotification) && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-yellow-500/30 bg-yellow-500/10 px-2.5 py-0.5 text-xs font-semibold text-yellow-600">
+              <Zap className="h-3 w-3" />
+              Demo Mode - AI Simulation
+            </span>
+          )}
+        </div>
         <h1 className="font-display text-3xl font-bold sm:text-4xl">Placement Readiness Dashboard</h1>
         <p className="text-sm text-muted-foreground">
-          Upload your resume, pick a role, and run a coordinated analysis across three specialist agents.
+          Final-year engineering project level assessment with multi-agent AI orchestration
         </p>
       </header>
 
@@ -154,12 +199,13 @@ function Dashboard() {
         </motion.div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_1.2fr]">
+      {/* Input Section */}
+      <div className="grid gap-6 lg:grid-cols-[1fr_1.2fr] mb-8">
         {/* INPUTS */}
         <section className="glass rounded-2xl p-6">
-          <h2 className="font-display text-lg font-semibold">1. Upload & Configure</h2>
+          <h2 className="font-display text-lg font-semibold mb-6">1. Upload & Configure</h2>
 
-          <label className="mt-4 block">
+          <label className="block mb-4">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Resume PDF</div>
             <div className="relative grid place-items-center rounded-xl border-2 border-dashed border-border bg-background/30 p-6 transition-colors hover:border-accent-glow/60">
               <input
@@ -186,7 +232,7 @@ function Dashboard() {
             </div>
           </label>
 
-          <label className="mt-4 block">
+          <label className="block mb-4">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Target Role</div>
             <select
               value={role}
@@ -198,7 +244,7 @@ function Dashboard() {
           </label>
 
           {error && (
-            <div className="mt-4 flex items-start gap-2 rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm text-danger">
+            <div className="mb-4 flex items-start gap-2 rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm text-danger">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{error}</span>
             </div>
@@ -207,7 +253,7 @@ function Dashboard() {
           <button
             onClick={onAnalyze}
             disabled={!resumeText || running || parsing}
-            className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand to-accent-glow px-5 py-3 text-sm font-semibold text-brand-foreground shadow-lg transition-transform hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
+            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand to-accent-glow px-5 py-3 text-sm font-semibold text-brand-foreground shadow-lg transition-transform hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
           >
             {running ? <><Loader2 className="h-4 w-4 animate-spin" />Running Agents…</> : <><Play className="h-4 w-4" />Run Multi-Agent Analysis</>}
           </button>
@@ -217,7 +263,41 @@ function Dashboard() {
         <WorkflowDiagram statuses={statuses} coordinatorStatus={coordinatorStatus} />
       </div>
 
-      {/* RESULTS */}
+      {/* Company Selector */}
+      <CompanySelector selectedCompany={selectedCompany} onCompanyChange={setSelectedCompany} />
+
+      {/* KPI Dashboard */}
+      {final && <KPIDashboard overallScore={final.overallScore} resumeScore={final.resumeScore} atsScore={final.atsScore} placementReadiness={final.placementReadiness} />}
+
+      {/* Agent Execution Timeline */}
+      {timelineEntries.length > 0 && <AgentExecutionTimeline entries={timelineEntries} isPresenting={running} />}
+
+      {/* Skill Gap Analysis */}
+      {final && (
+        <SkillGapAnalysis
+          current={final.ats.matchedKeywords}
+          missing={final.ats.missingKeywords}
+          recommended={final.roadmap.skillGaps}
+          criticalSkills={final.ats.skillGaps.slice(0, 3)}
+        />
+      )}
+
+      {/* Professional Report */}
+      {final && (
+        <ProfessionalReport
+          report={final}
+          company={selectedCompany}
+          studentName="Engineering Student"
+          onDownloadPDF={() => {
+            generatePlacementReportPDF(final, selectedCompany, "Engineering Student").catch(e => {
+              console.error(e);
+              alert("Unable to generate PDF report. Check console for details.");
+            });
+          }}
+        />
+      )}
+
+      {/* Legacy Results Cards */}
       <div className="mt-8 space-y-6">
         <AnimatePresence mode="popLayout">
           {resume && <ResumeResultCard key="resume" r={resume} />}

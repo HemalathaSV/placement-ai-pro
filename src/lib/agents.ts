@@ -95,6 +95,13 @@ export function resetDemoModeActivated() {
   demoModeActivated = false;
 }
 
+export class DemoModeActivatedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DemoModeActivatedError";
+  }
+}
+
 const MODEL = "gemini-2.0-flash";
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 
@@ -132,34 +139,63 @@ function generateDemoResumeReport(resumeText: string): ResumeReport {
   };
 }
 
-function generateDemoAtsReport(resumeText: string, role: string): AtsReport {
+function generateDemoAtsReport(resumeText: string, role: string, company: string): AtsReport {
   const keywords = extractKeywordsForRole(role);
   const resumeLower = resumeText.toLowerCase();
-  const matchedKeywords = keywords.filter(k => resumeLower.includes(k.toLowerCase())).slice(0, 8);
-  const missingKeywords = keywords.filter(k => !resumeLower.includes(k.toLowerCase())).slice(0, 6);
+  
+  // 1. Keyword Match (40%)
+  const matchedKeywords = keywords.filter(k => resumeLower.includes(k.toLowerCase()));
+  const missingKeywords = keywords.filter(k => !resumeLower.includes(k.toLowerCase()));
+  const keywordMatchPct = Math.round((matchedKeywords.length / keywords.length) * 100);
+  const keywordScore = keywordMatchPct * 0.40;
+
+  // 2. Skill Match (30%)
+  const skillMatchPct = keywordMatchPct > 0 ? Math.min(100, keywordMatchPct + 10) : 0; 
+  const skillScore = skillMatchPct * 0.30;
+
+  // 3. Resume Structure (20%)
+  const structureKeywords = ["education", "skills", "projects", "experience", "certifications", "contact"];
+  const structureMatches = structureKeywords.filter(k => resumeLower.includes(k));
+  const structurePct = Math.round((structureMatches.length / structureKeywords.length) * 100);
+  const structureScore = structurePct * 0.20;
+
+  // 4. Experience & Projects (10%)
+  const hasExpOrProj = resumeLower.includes("experience") || resumeLower.includes("project");
+  const expPct = hasExpOrProj ? 90 : 40;
+  const expScore = expPct * 0.10;
+
+  // Calculate final ATS Score
+  const atsScore = Math.round(keywordScore + skillScore + structureScore + expScore);
+
+  // Interpretation
+  let roleCompatibility = "";
+  if (atsScore >= 90) {
+    roleCompatibility = `Excellent ATS Compatibility with ${role} at ${company}. Candidate profile strongly aligns with required skills and keywords.`;
+  } else if (atsScore >= 75) {
+    roleCompatibility = `Good ATS Compatibility with ${role} at ${company}. Resume covers most requirements but lacks some advanced specialization keywords.`;
+  } else if (atsScore >= 60) {
+    roleCompatibility = `Moderate ATS Compatibility with ${role} at ${company}. Candidate profile covers foundational requirements but needs significant optimization.`;
+  } else {
+    roleCompatibility = `Needs Improvement for ${role} at ${company}. Major skill gaps and missing keywords identified.`;
+  }
 
   return {
-    atsScore: 65 + Math.random() * 20,
-    keywordMatch: Math.round((matchedKeywords.length / keywords.length) * 100),
-    matchedKeywords,
-    missingKeywords,
-    skillGaps: [
-      "Advanced system design patterns",
-      "Cloud infrastructure (AWS/GCP/Azure)",
-      "Containerization (Docker/Kubernetes)",
-      "CI/CD pipeline experience",
-    ],
-    roleCompatibility: `Moderate alignment with ${role}. Resume covers foundational requirements but lacks advanced specialization keywords.`,
+    atsScore,
+    keywordMatch: keywordMatchPct,
+    matchedKeywords: matchedKeywords.slice(0, 8),
+    missingKeywords: missingKeywords.slice(0, 6),
+    skillGaps: missingKeywords.slice(0, 4).map(k => `Missing competency in ${k}`),
+    roleCompatibility,
     suggestions: [
       "Add specific framework versions and tools used",
       `Emphasize ${role}-specific technologies in your experience section`,
       "Include metrics showing impact of projects",
-      "List relevant certifications prominently",
+      "Ensure standard structural headers (Education, Experience, Skills) are present",
     ],
   };
 }
 
-function generateDemoRoadmapReport(resumeText: string, role: string, resume: ResumeReport, ats: AtsReport): RoadmapReport {
+function generateDemoRoadmapReport(resumeText: string, role: string, company: string, resume: ResumeReport, ats: AtsReport): RoadmapReport {
   const weeks: RoadmapWeek[] = [
     {
       week: 1,
@@ -193,15 +229,15 @@ function generateDemoRoadmapReport(resumeText: string, role: string, resume: Res
     projects: [
       {
         title: "Full Stack Application Project",
-        description: "Build a complete application demonstrating ${role} skills with modern tech stack",
+        description: `Build a complete application demonstrating ${role} skills with modern tech stack for ${company}`,
       },
       {
         title: "Open Source Contribution",
-        description: "Contribute to established open source project relevant to target role",
+        description: `Contribute to established open source project relevant to target role at ${company}`,
       },
     ],
     interviewPlan: [
-      "System design for ${role} role",
+      `System design for ${role} role at ${company}`,
       "Behavioral interview prep: Tell us about a challenging project",
       "Technical deep-dive on one portfolio project",
       "Culture fit and team collaboration discussion",
@@ -231,12 +267,9 @@ async function callGemini<T>(systemRole: string, userPrompt: string, schemaHint:
   
   // Check if demo mode is enabled or should be auto-activated
   if (!key || isDemoMode()) {
-    // If no key and not explicitly in demo mode, would normally throw
-    // But this is handled by the calling agent
     if (isDemoMode()) {
       demoModeActivated = true;
-      // Generate appropriate demo response based on schema
-      return generateDemoResponse<T>(schemaHint) as T;
+      throw new DemoModeActivatedError("Demo mode enabled via Settings.");
     }
     if (!key) throw new Error("Missing Gemini API key. Add it in Settings.");
   }
@@ -274,7 +307,7 @@ async function callGemini<T>(systemRole: string, userPrompt: string, schemaHint:
       if (status === 429 || status === 403 || status === 500) {
         demoModeActivated = true;
         console.warn(`Gemini API error ${status}. Activating Demo Mode.`);
-        return generateDemoResponse<T>(schemaHint) as T;
+        throw new DemoModeActivatedError(`Gemini ${status}: Activating Demo Mode.`);
       }
       
       throw new Error(`Gemini ${status}: ${txt.slice(0, 300)}`);
@@ -288,24 +321,10 @@ async function callGemini<T>(systemRole: string, userPrompt: string, schemaHint:
     if (e.message.includes("fetch") || e.message.includes("network") || e.message.includes("timeout")) {
       demoModeActivated = true;
       console.warn("Network error. Activating Demo Mode.");
-      return generateDemoResponse<T>(schemaHint) as T;
+      throw new DemoModeActivatedError("Network error. Activating Demo Mode.");
     }
     throw e;
   }
-}
-
-function generateDemoResponse<T>(schemaHint: string): T {
-  // Parse schema to determine what type of response to generate
-  if (schemaHint.includes("atsScore")) {
-    return { atsScore: 72, keywordMatch: 68 } as any;
-  }
-  if (schemaHint.includes("placementReadiness")) {
-    return { placementReadiness: 75, weeks: [] } as any;
-  }
-  if (schemaHint.includes("score")) {
-    return { score: 7 } as any;
-  }
-  return {} as T;
 }
 
 function extractJson<T>(text: string): T {
@@ -325,41 +344,76 @@ function extractJson<T>(text: string): T {
 // ---- Individual agents ----
 
 export async function runResumeAgent(resumeText: string): Promise<ResumeReport> {
-  if (isDemoMode()) {
+  if (isDemoMode() || getDemoModeActivated()) {
+    await new Promise((r) => setTimeout(r, 2500));
     return generateDemoResumeReport(resumeText);
   }
-  return callGemini<ResumeReport>(
-    "You are a Resume Evaluation Specialist. Be rigorous, specific, and constructive.",
-    `Evaluate the following resume.\n\nRESUME:\n${resumeText}`,
-    `{"score":number(0-10),"strengths":string[],"weaknesses":string[],"missingSections":string[],"skillAnalysis":string,"projectEvaluation":string,"improvements":string[]}`,
-  );
+  try {
+    return await callGemini<ResumeReport>(
+      "You are a Resume Evaluation Specialist. Be rigorous, specific, and constructive.",
+      `Evaluate the following resume.\n\nRESUME:\n${resumeText}`,
+      `{"score":number(0-10),"strengths":string[],"weaknesses":string[],"missingSections":string[],"skillAnalysis":string,"projectEvaluation":string,"improvements":string[]}`,
+    );
+  } catch (e: any) {
+    if (e instanceof DemoModeActivatedError || getDemoModeActivated()) {
+      await new Promise((r) => setTimeout(r, 2500));
+      return generateDemoResumeReport(resumeText);
+    }
+    throw e;
+  }
 }
 
-export async function runAtsAgent(resumeText: string, role: string): Promise<AtsReport> {
-  if (isDemoMode()) {
-    return generateDemoAtsReport(resumeText, role);
+export async function runAtsAgent(resumeText: string, role: string, company: string): Promise<AtsReport> {
+  if (isDemoMode() || getDemoModeActivated()) {
+    await new Promise((r) => setTimeout(r, 2500));
+    return generateDemoAtsReport(resumeText, role, company);
   }
-  return callGemini<AtsReport>(
-    "You are an ATS Optimization Specialist. Score the resume against the target role with the rigour of a modern Applicant Tracking System.",
-    `Target Role: ${role}\n\nRESUME:\n${resumeText}`,
-    `{"atsScore":number(0-100),"keywordMatch":number(0-100),"matchedKeywords":string[],"missingKeywords":string[],"skillGaps":string[],"roleCompatibility":string,"suggestions":string[]}`,
-  );
+  try {
+    return await callGemini<AtsReport>(
+      "You are an ATS Optimization Specialist. Score the resume against the target role with the rigour of a modern Applicant Tracking System.\n" +
+      "CRITICAL SCORING METHODOLOGY:\n" +
+      "ATS Score = (Keyword Match × 40%) + (Skill Match × 30%) + (Resume Structure × 20%) + (Experience & Projects × 10%)\n" +
+      "Keyword Match % = (Matched Keywords / Total Required Keywords) × 100\n" +
+      "Skill Match % = based on presence of required technical and soft skills\n" +
+      "Structure % = based on presence of Contact Info, Education, Skills, Projects, Experience, Certifications\n" +
+      "Experience % = based on relevance of projects and work experience\n" +
+      "Final Interpretation: 90-100 (Excellent), 75-89 (Good), 60-74 (Moderate), Below 60 (Needs Improvement)",
+      `Target Role: ${role} at ${company}\n\nRESUME:\n${resumeText}`,
+      `{"atsScore":number(0-100),"keywordMatch":number(0-100),"matchedKeywords":string[],"missingKeywords":string[],"skillGaps":string[],"roleCompatibility":string,"suggestions":string[]}`,
+    );
+  } catch (e: any) {
+    if (e instanceof DemoModeActivatedError || getDemoModeActivated()) {
+      await new Promise((r) => setTimeout(r, 2500));
+      return generateDemoAtsReport(resumeText, role, company);
+    }
+    throw e;
+  }
 }
 
 export async function runRoadmapAgent(
   resumeText: string,
   role: string,
+  company: string,
   resume: ResumeReport,
   ats: AtsReport,
 ): Promise<RoadmapReport> {
-  if (isDemoMode()) {
-    return generateDemoRoadmapReport(resumeText, role, resume, ats);
+  if (isDemoMode() || getDemoModeActivated()) {
+    await new Promise((r) => setTimeout(r, 2500));
+    return generateDemoRoadmapReport(resumeText, role, company, resume, ats);
   }
-  return callGemini<RoadmapReport>(
-    "You are a Career Development Coach building practical, week-by-week plans for engineering students.",
-    `Target Role: ${role}\n\nRESUME ANALYSIS: ${JSON.stringify(resume)}\n\nATS ANALYSIS: ${JSON.stringify(ats)}\n\nResume excerpt:\n${resumeText.slice(0, 2000)}`,
-    `{"skillGaps":string[],"weeks":[{"week":number,"focus":string,"tasks":string[],"resources":string[]}],"projects":[{"title":string,"description":string}],"interviewPlan":string[],"placementReadiness":number(0-100)}`,
-  );
+  try {
+    return await callGemini<RoadmapReport>(
+      "You are a Career Development Coach building practical, week-by-week plans for engineering students.",
+      `Target Role: ${role} at ${company}\n\nRESUME ANALYSIS: ${JSON.stringify(resume)}\n\nATS ANALYSIS: ${JSON.stringify(ats)}\n\nResume excerpt:\n${resumeText.slice(0, 2000)}`,
+      `{"skillGaps":string[],"weeks":[{"week":number,"focus":string,"tasks":string[],"resources":string[]}],"projects":[{"title":string,"description":string}],"interviewPlan":string[],"placementReadiness":number(0-100)}`,
+    );
+  } catch (e: any) {
+    if (e instanceof DemoModeActivatedError || getDemoModeActivated()) {
+      await new Promise((r) => setTimeout(r, 2500));
+      return generateDemoRoadmapReport(resumeText, role, company, resume, ats);
+    }
+    throw e;
+  }
 }
 
 // ---- Coordinator ----
@@ -375,6 +429,7 @@ export interface CoordinatorEvents {
 export async function runCoordinator(
   resumeText: string,
   role: string,
+  company: string,
   ev: CoordinatorEvents,
 ): Promise<FinalReport> {
   // Reset demo mode flag at the start of each coordinator run
@@ -397,7 +452,7 @@ export async function runCoordinator(
   ev.onStatus("ats", "running");
   let ats: AtsReport;
   try {
-    ats = await runAtsAgent(resumeText, role);
+    ats = await runAtsAgent(resumeText, role, company);
     ev.onAts?.(ats);
     ev.onStatus("ats", "completed");
   } catch (e: any) {
@@ -408,7 +463,7 @@ export async function runCoordinator(
   ev.onStatus("roadmap", "running");
   let roadmap: RoadmapReport;
   try {
-    roadmap = await runRoadmapAgent(resumeText, role, resume, ats);
+    roadmap = await runRoadmapAgent(resumeText, role, company, resume, ats);
     ev.onRoadmap?.(roadmap);
     ev.onStatus("roadmap", "completed");
   } catch (e: any) {
